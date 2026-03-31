@@ -22,13 +22,28 @@ const SYSTEM_PROMPTS = {
 - 如果与对方达成一致，请在发言末尾明确说“我们达成共识”`
 };
 
+// 将自定义角色映射为 API 允许的角色
+function normalizeMessages(messages) {
+  return messages.map(msg => {
+    let role = msg.role;
+    // 将 builder 和 critic 映射为 assistant
+    if (role === 'builder' || role === 'critic') {
+      role = 'assistant';
+    }
+    // 确保角色是允许的值
+    return { role, content: msg.content };
+  });
+}
+
 // 调用 DeepSeek API（带详细日志）
 async function callDeepSeek(messages, apiKey) {
   try {
-    console.log('Calling DeepSeek with messages:', JSON.stringify(messages, null, 2));
+    // 标准化消息中的角色
+    const normalized = normalizeMessages(messages);
+    console.log('Calling DeepSeek with normalized messages:', JSON.stringify(normalized, null, 2));
     const response = await axios.post('https://api.deepseek.com/v1/chat/completions', {
       model: 'deepseek-chat',
-      messages: messages,
+      messages: normalized,
       stream: false
     }, {
       headers: {
@@ -64,12 +79,13 @@ app.post('/api/start', async (req, res) => {
     while (round < maxRounds) {
       round++;
       const systemPrompt = currentRole === 'builder' ? SYSTEM_PROMPTS.builder : SYSTEM_PROMPTS.critic;
-      const messages = [
+      // 构造发送给 AI 的消息列表（包含系统提示和历史）
+      const messagesForAI = [
         { role: 'system', content: systemPrompt },
         ...history
       ];
       
-      const reply = await callDeepSeek(messages, apiKey);
+      const reply = await callDeepSeek(messagesForAI, apiKey);
       history.push({ role: currentRole, content: reply });
       
       // 检查是否达成共识
