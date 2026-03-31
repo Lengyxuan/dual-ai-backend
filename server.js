@@ -45,16 +45,24 @@ async function callDeepSeek(messages, apiKey) {
           'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json'
         },
-        timeout: 30000
+        timeout: 90000  // 增加到 90 秒
       }
     );
     console.log('[DeepSeek] Response status:', response.status);
     return response.data.choices[0].message.content;
   } catch (error) {
-    if (error.response) {
+    if (error.code === 'ECONNABORTED') {
+      console.error('[DeepSeek] Request timed out (90s)');
+    } else if (error.response) {
       console.error(`[DeepSeek] HTTP ${error.response.status}:`, error.response.data);
     } else if (error.request) {
-      console.error('[DeepSeek] No response received:', error.request);
+      console.error('[DeepSeek] No response received (network error or timeout)');
+      console.error('[DeepSeek] Request details:', {
+        method: error.request.method,
+        path: error.request.path,
+        host: error.request.host,
+        timeout: error.request.timeout
+      });
     } else {
       console.error('[DeepSeek] Request setup error:', error.message);
     }
@@ -143,7 +151,6 @@ const server = app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
 
-// 优雅关闭：监听 SIGTERM 信号，防止被 Railway 强制杀死
 process.on('SIGTERM', () => {
   console.log('Received SIGTERM, shutting down gracefully...');
   server.close(() => {
@@ -152,10 +159,8 @@ process.on('SIGTERM', () => {
   });
 });
 
-// 全局异常捕获，防止进程退出
 process.on('uncaughtException', (err) => {
   console.error('Uncaught Exception:', err);
-  // 不退出，继续运行
 });
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
