@@ -62,7 +62,6 @@ async function callDeepSeek(messages, apiKey) {
   }
 }
 
-// 从环境变量读取 API 密钥，如果没有则打印警告但继续运行（这样启动不会失败，但后续调用会报错）
 const API_KEY = process.env.DEEPSEEK_API_KEY;
 if (!API_KEY) {
   console.warn('⚠️ 警告: 环境变量 DEEPSEEK_API_KEY 未设置！AI 调用将失败。');
@@ -140,13 +139,23 @@ app.get('/health', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
 
-// 保持进程运行，捕获异常防止退出
+// 优雅关闭：监听 SIGTERM 信号，防止被 Railway 强制杀死
+process.on('SIGTERM', () => {
+  console.log('Received SIGTERM, shutting down gracefully...');
+  server.close(() => {
+    console.log('Closed out remaining connections.');
+    process.exit(0);
+  });
+});
+
+// 全局异常捕获，防止进程退出
 process.on('uncaughtException', (err) => {
   console.error('Uncaught Exception:', err);
+  // 不退出，继续运行
 });
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
