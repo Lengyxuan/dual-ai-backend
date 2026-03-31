@@ -5,7 +5,7 @@ require('dotenv').config();
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 const SYSTEM_PROMPTS = {
   builder: `你是一个“构建与优化”专家。你的任务是：
@@ -32,55 +32,54 @@ function normalizeMessages(messages) {
 async function callDeepSeek(messages, apiKey) {
   try {
     const normalized = normalizeMessages(messages);
-    console.log('Calling DeepSeek with normalized messages:', JSON.stringify(normalized, null, 2));
-    const response = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-      model: 'deepseek-chat',
-      messages: normalized,
-      stream: false
-    }, {
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
+    console.log('[DeepSeek] Request messages:', JSON.stringify(normalized, null, 2));
+    const response = await axios.post(
+      'https://api.deepseek.com/v1/chat/completions',
+      {
+        model: 'deepseek-chat',
+        messages: normalized,
+        stream: false
       },
-      timeout: 30000
-    });
-    console.log('DeepSeek response:', response.data);
+      {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 30000 // 30秒超时
+      }
+    );
+    console.log('[DeepSeek] Response status:', response.status);
     return response.data.choices[0].message.content;
   } catch (error) {
-    // 详细打印错误
+    // 输出简洁的错误信息
     if (error.response) {
-      console.error('DeepSeek API error status:', error.response.status);
-      console.error('DeepSeek API error headers:', error.response.headers);
-      console.error('DeepSeek API error data:', error.response.data);
+      console.error(`[DeepSeek] HTTP ${error.response.status}:`, error.response.data);
     } else if (error.request) {
-      console.error('No response received from DeepSeek. Request details:', error.request);
+      console.error('[DeepSeek] No response received:', error.request);
     } else {
-      console.error('Error setting up request:', error.message);
+      console.error('[DeepSeek] Request setup error:', error.message);
     }
-    // 抛出更具体的错误
-    throw new Error(`DeepSeek API call failed: ${error.message}`);
+    throw new Error(`DeepSeek API call failed: ${error.message || 'unknown error'}`);
   }
 }
 
-function getApiKey(req) {
-  const envKey = process.env.DEEPSEEK_API_KEY;
-  if (envKey && envKey !== '') {
-    return envKey;
-  }
-  return req.body.apiKey;
+// 从环境变量读取 API 密钥（必须）
+const API_KEY = process.env.DEEPSEEK_API_KEY;
+if (!API_KEY) {
+  console.error('❌ 环境变量 DEEPSEEK_API_KEY 未设置！请添加后再启动。');
+  process.exit(1);
 }
 
+// 启动讨论接口
 app.post('/api/start', async (req, res) => {
   const { question, maxRounds = 10 } = req.body;
-  const apiKey = getApiKey(req);
-  if (!apiKey) {
-    console.error('Missing API key in request or environment');
-    return res.status(400).json({ error: 'Missing API key. Please set DEEPSEEK_API_KEY in environment.' });
+  if (!question || typeof question !== 'string') {
+    return res.status(400).json({ error: 'Missing or invalid question' });
   }
 
   let history = [{ role: 'user', content: question }];
-  let round = 0;
   let currentRole = 'builder';
+  let round = 0;
 
   try {
     while (round < maxRounds) {
@@ -91,7 +90,7 @@ app.post('/api/start', async (req, res) => {
         ...history
       ];
 
-      const reply = await callDeepSeek(messagesForAI, apiKey);
+      const reply = await callDeepSeek(messagesForAI, API_KEY);
       history.push({ role: currentRole, content: reply });
 
       if (reply.includes('我们达成共识')) {
@@ -102,16 +101,16 @@ app.post('/api/start', async (req, res) => {
     }
     return res.json({ finished: true, reason: 'max_rounds', history });
   } catch (error) {
-    console.error('Error in /api/start:', error);
+    console.error('[API] /api/start error:', error.message);
     return res.status(500).json({ error: 'AI call failed', details: error.message });
   }
 });
 
+// 生成总结接口
 app.post('/api/summarize', async (req, res) => {
   const { history } = req.body;
-  const apiKey = getApiKey(req);
-  if (!apiKey) {
-    return res.status(400).json({ error: 'Missing API key.' });
+  if (!history || !Array.isArray(history)) {
+    return res.status(400).json({ error: 'Invalid history' });
   }
 
   const summaryPrompt = `请根据以上讨论，生成一份精炼的总结性答案，整合双方观点，突出共识和最终结论。`;
@@ -122,22 +121,20 @@ app.post('/api/summarize', async (req, res) => {
   ];
 
   try {
-    const summary = await callDeepSeek(messages, apiKey);
+    const summary = await callDeepSeek(messages, API_KEY);
     res.json({ summary });
   } catch (error) {
-    console.error('Error in /api/summarize:', error);
-    res.status(500).json({ error: 'Summary failed' });
+    console.error('[API] /api/summarize error:', error.message);
+    res.status(500).json({ error: 'Summary failed', details: error.message });
   }
 });
 
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
-});
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+// 健康检查（可选）
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok' });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`✅ Server running on port ${PORT}`);
 });
