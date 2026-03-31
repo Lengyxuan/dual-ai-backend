@@ -62,16 +62,22 @@ async function callDeepSeek(messages, apiKey) {
   }
 }
 
+// 从环境变量读取 API 密钥，如果没有则打印警告但继续运行（这样启动不会失败，但后续调用会报错）
 const API_KEY = process.env.DEEPSEEK_API_KEY;
 if (!API_KEY) {
-  console.error('❌ 环境变量 DEEPSEEK_API_KEY 未设置！请添加后再启动。');
-  process.exit(1);
+  console.warn('⚠️ 警告: 环境变量 DEEPSEEK_API_KEY 未设置！AI 调用将失败。');
+} else {
+  console.log('✅ DeepSeek API key 已加载');
 }
 
 app.post('/api/start', async (req, res) => {
   const { question, maxRounds = 10 } = req.body;
   if (!question || typeof question !== 'string') {
     return res.status(400).json({ error: 'Missing or invalid question' });
+  }
+
+  if (!API_KEY) {
+    return res.status(500).json({ error: 'Server not configured: missing API key' });
   }
 
   let history = [{ role: 'user', content: question }];
@@ -109,6 +115,10 @@ app.post('/api/summarize', async (req, res) => {
     return res.status(400).json({ error: 'Invalid history' });
   }
 
+  if (!API_KEY) {
+    return res.status(500).json({ error: 'Server not configured: missing API key' });
+  }
+
   const summaryPrompt = `请根据以上讨论，生成一份精炼的总结性答案，整合双方观点，突出共识和最终结论。`;
   const messages = [
     { role: 'system', content: '你是一个专业的总结助手，善于提炼要点。' },
@@ -126,10 +136,18 @@ app.post('/api/summarize', async (req, res) => {
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok' });
+  res.json({ status: 'ok', apiKeySet: !!API_KEY });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
+});
+
+// 保持进程运行，捕获异常防止退出
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
