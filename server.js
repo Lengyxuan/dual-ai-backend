@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const axiosRetry = require('axios-retry');
 require('dotenv').config();
 
 const app = express();
@@ -22,26 +21,6 @@ const SYSTEM_PROMPTS = {
 - 如果与对方达成一致，请在发言末尾明确说“我们达成共识”`
 };
 
-// 创建一个带重试机制的 axios 实例
-const deepseekClient = axios.create({
-  baseURL: 'https://api.deepseek.com',
-  timeout: 30000,
-  headers: {
-    'Content-Type': 'application/json'
-  }
-});
-
-// 配置重试（最多重试2次，指数退避）
-axiosRetry(deepseekClient, {
-  retries: 2,
-  retryDelay: axiosRetry.exponentialDelay,
-  retryCondition: (error) => {
-    // 网络错误或 5xx 状态码时重试
-    return axiosRetry.isNetworkOrIdempotentRequestError(error) ||
-           (error.response && error.response.status >= 500);
-  }
-});
-
 function normalizeMessages(messages) {
   return messages.map(msg => {
     let role = msg.role;
@@ -53,38 +32,42 @@ function normalizeMessages(messages) {
 async function callDeepSeek(messages, apiKey) {
   try {
     const normalized = normalizeMessages(messages);
-    console.log('[DeepSeek] Sending request, messages count:', normalized.length);
-    const response = await deepseekClient.post('/v1/chat/completions', {
-      model: 'deepseek-chat',
-      messages: normalized,
-      stream: false
-    }, {
-      headers: {
-        'Authorization': `Bearer ${apiKey}`
+    console.log('[DeepSeek] Request messages:', JSON.stringify(normalized, null, 2));
+    const response = await axios.post(
+      'https://api.deepseek.com/v1/chat/completions',
+      {
+        model: 'deepseek-chat',
+        messages: normalized,
+        stream: false
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 30000
       }
-    });
-    console.log('[DeepSeek] Response received, status:', response.status);
+    );
+    console.log('[DeepSeek] Response status:', response.status);
     return response.data.choices[0].message.content;
   } catch (error) {
     if (error.response) {
-      console.error(`[DeepSeek] API error ${error.response.status}:`, error.response.data);
+      console.error(`[DeepSeek] HTTP ${error.response.status}:`, error.response.data);
     } else if (error.request) {
-      console.error('[DeepSeek] No response received (network issue)');
+      console.error('[DeepSeek] No response received:', error.request);
     } else {
       console.error('[DeepSeek] Request setup error:', error.message);
     }
-    throw new Error(`DeepSeek API call failed: ${error.message}`);
+    throw new Error(`DeepSeek API call failed: ${error.message || 'unknown error'}`);
   }
 }
 
-// 从环境变量读取 API 密钥（必须）
 const API_KEY = process.env.DEEPSEEK_API_KEY;
 if (!API_KEY) {
   console.error('❌ 环境变量 DEEPSEEK_API_KEY 未设置！请添加后再启动。');
   process.exit(1);
 }
 
-// 启动讨论接口
 app.post('/api/start', async (req, res) => {
   const { question, maxRounds = 10 } = req.body;
   if (!question || typeof question !== 'string') {
@@ -120,7 +103,6 @@ app.post('/api/start', async (req, res) => {
   }
 });
 
-// 生成总结接口
 app.post('/api/summarize', async (req, res) => {
   const { history } = req.body;
   if (!history || !Array.isArray(history)) {
@@ -143,7 +125,6 @@ app.post('/api/summarize', async (req, res) => {
   }
 });
 
-// 健康检查
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
