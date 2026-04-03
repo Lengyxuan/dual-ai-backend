@@ -29,7 +29,7 @@ function normalizeMessages(messages) {
   });
 }
 
-async function callDeepSeek(messages, apiKey) {
+async function callDeepSeek(messages, apiKey, temperature = 0.7) {
   try {
     const normalized = normalizeMessages(messages);
     console.log('[DeepSeek] Request messages:', JSON.stringify(normalized, null, 2));
@@ -39,6 +39,7 @@ async function callDeepSeek(messages, apiKey) {
         model: 'deepseek-chat',
         messages: normalized,
         stream: false
+        temperature: temperature
       },
       {
         headers: {
@@ -100,7 +101,8 @@ app.post('/api/start', async (req, res) => {
         ...history
       ];
 
-      const reply = await callDeepSeek(messagesForAI, API_KEY);
+      const temperature = currentRole === 'builder' ? 1.0 : 0.3;
+      const reply = await callDeepSeek(messagesForAI, API_KEY, temperature);
       history.push({ role: currentRole, content: reply });
 
       if (reply.includes('我们达成共识')) {
@@ -134,6 +136,8 @@ app.post('/api/summarize', async (req, res) => {
   ];
 
   try {
+    const summary = await callDeepSeek(messages, API_KEY, 0.5);
+    res.json({ summary });
     const summary = await callDeepSeek(messages, API_KEY);
     res.json({ summary });
   } catch (error) {
