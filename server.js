@@ -38,7 +38,7 @@ async function callDeepSeek(messages, apiKey, temperature = 0.7) {
       {
         model: 'deepseek-chat',
         messages: normalized,
-        stream: false，
+        stream: false,
         temperature: temperature
       },
       {
