@@ -4,7 +4,8 @@ const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
-// 显式配置 CORS
+
+// CORS 配置
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'OPTIONS'],
@@ -53,7 +54,7 @@ async function callDeepSeek(messages, apiKey, temperature = 0.7) {
           'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json'
         },
-        timeout: 90000  // 增加到 90 秒
+        timeout: 90000
       }
     );
     console.log('[DeepSeek] Response status:', response.status);
@@ -65,12 +66,6 @@ async function callDeepSeek(messages, apiKey, temperature = 0.7) {
       console.error(`[DeepSeek] HTTP ${error.response.status}:`, error.response.data);
     } else if (error.request) {
       console.error('[DeepSeek] No response received (network error or timeout)');
-      console.error('[DeepSeek] Request details:', {
-        method: error.request.method,
-        path: error.request.path,
-        host: error.request.host,
-        timeout: error.request.timeout
-      });
     } else {
       console.error('[DeepSeek] Request setup error:', error.message);
     }
@@ -90,15 +85,12 @@ app.post('/api/start', async (req, res) => {
   if (!question || typeof question !== 'string') {
     return res.status(400).json({ error: 'Missing or invalid question' });
   }
-
   if (!API_KEY) {
     return res.status(500).json({ error: 'Server not configured: missing API key' });
   }
-
   let history = [{ role: 'user', content: question }];
   let currentRole = 'builder';
   let round = 0;
-
   try {
     while (round < maxRounds) {
       round++;
@@ -107,15 +99,12 @@ app.post('/api/start', async (req, res) => {
         { role: 'system', content: systemPrompt },
         ...history
       ];
-
       const temperature = currentRole === 'builder' ? 1.0 : 0.3;
       const reply = await callDeepSeek(messagesForAI, API_KEY, temperature);
       history.push({ role: currentRole, content: reply });
-
       if (reply.includes('我们达成共识')) {
         return res.json({ finished: true, reason: 'consensus', history });
       }
-
       currentRole = currentRole === 'builder' ? 'critic' : 'builder';
     }
     return res.json({ finished: true, reason: 'max_rounds', history });
@@ -130,22 +119,17 @@ app.post('/api/summarize', async (req, res) => {
   if (!history || !Array.isArray(history)) {
     return res.status(400).json({ error: 'Invalid history' });
   }
-
   if (!API_KEY) {
     return res.status(500).json({ error: 'Server not configured: missing API key' });
   }
-
   const summaryPrompt = `请根据以上讨论，生成一份精炼的总结性答案，整合双方观点，突出共识和最终结论。`;
   const messages = [
     { role: 'system', content: '你是一个专业的总结助手，善于提炼要点。' },
     ...history,
     { role: 'user', content: summaryPrompt }
   ];
-
   try {
     const summary = await callDeepSeek(messages, API_KEY, 0.5);
-    res.json({ summary });
-    const summary = await callDeepSeek(messages, API_KEY);
     res.json({ summary });
   } catch (error) {
     console.error('[API] /api/summarize error:', error.message);
@@ -169,7 +153,6 @@ process.on('SIGTERM', () => {
     process.exit(0);
   });
 });
-
 process.on('uncaughtException', (err) => {
   console.error('Uncaught Exception:', err);
 });
