@@ -5,14 +5,12 @@ require('dotenv').config();
 
 const app = express();
 
-// CORS 配置
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.options('*', cors());
-
 app.use(express.json({ limit: '10mb' }));
 
 const SYSTEM_PROMPTS = {
@@ -40,7 +38,6 @@ function normalizeMessages(messages) {
 async function callDeepSeek(messages, apiKey, temperature = 0.7) {
   try {
     const normalized = normalizeMessages(messages);
-    console.log('[DeepSeek] Request messages:', JSON.stringify(normalized, null, 2));
     const response = await axios.post(
       'https://api.deepseek.com/v1/chat/completions',
       {
@@ -50,55 +47,42 @@ async function callDeepSeek(messages, apiKey, temperature = 0.7) {
         temperature: temperature
       },
       {
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         timeout: 90000
       }
     );
-    console.log('[DeepSeek] Response status:', response.status);
     return response.data.choices[0].message.content;
   } catch (error) {
-    if (error.code === 'ECONNABORTED') {
-      console.error('[DeepSeek] Request timed out (90s)');
-    } else if (error.response) {
-      console.error(`[DeepSeek] HTTP ${error.response.status}:`, error.response.data);
-    } else if (error.request) {
-      console.error('[DeepSeek] No response received (network error or timeout)');
-    } else {
-      console.error('[DeepSeek] Request setup error:', error.message);
-    }
-    throw new Error(`DeepSeek API call failed: ${error.message || 'unknown error'}`);
+    if (error.code === 'ECONNABORTED') console.error('[DeepSeek] Timeout');
+    else if (error.response) console.error(`[DeepSeek] HTTP ${error.response.status}:`, error.response.data);
+    else console.error('[DeepSeek] Error:', error.message);
+    throw new Error(`DeepSeek API call failed: ${error.message}`);
   }
 }
 
 const API_KEY = process.env.DEEPSEEK_API_KEY;
-if (!API_KEY) {
-  console.warn('⚠️ 警告: 环境变量 DEEPSEEK_API_KEY 未设置！AI 调用将失败。');
-} else {
-  console.log('✅ DeepSeek API key 已加载');
-}
+if (!API_KEY) console.warn('⚠️ 警告: DEEPSEEK_API_KEY 未设置');
+else console.log('✅ DeepSeek API key 已加载');
+
+// 根路由
+app.get('/', (req, res) => {
+  res.send('Dual AI Backend is running');
+});
 
 app.post('/api/start', async (req, res) => {
   const { question, maxRounds = 10 } = req.body;
-  if (!question || typeof question !== 'string') {
-    return res.status(400).json({ error: 'Missing or invalid question' });
-  }
-  if (!API_KEY) {
-    return res.status(500).json({ error: 'Server not configured: missing API key' });
-  }
+  if (!question) return res.status(400).json({ error: 'Missing question' });
+  if (!API_KEY) return res.status(500).json({ error: 'Missing API key' });
+
   let history = [{ role: 'user', content: question }];
   let currentRole = 'builder';
   let round = 0;
+
   try {
     while (round < maxRounds) {
       round++;
       const systemPrompt = currentRole === 'builder' ? SYSTEM_PROMPTS.builder : SYSTEM_PROMPTS.critic;
-      const messagesForAI = [
-        { role: 'system', content: systemPrompt },
-        ...history
-      ];
+      const messagesForAI = [{ role: 'system', content: systemPrompt }, ...history];
       const temperature = currentRole === 'builder' ? 1.0 : 0.3;
       const reply = await callDeepSeek(messagesForAI, API_KEY, temperature);
       history.push({ role: currentRole, content: reply });
@@ -109,19 +93,15 @@ app.post('/api/start', async (req, res) => {
     }
     return res.json({ finished: true, reason: 'max_rounds', history });
   } catch (error) {
-    console.error('[API] /api/start error:', error.message);
     return res.status(500).json({ error: 'AI call failed', details: error.message });
   }
 });
 
 app.post('/api/summarize', async (req, res) => {
   const { history } = req.body;
-  if (!history || !Array.isArray(history)) {
-    return res.status(400).json({ error: 'Invalid history' });
-  }
-  if (!API_KEY) {
-    return res.status(500).json({ error: 'Server not configured: missing API key' });
-  }
+  if (!history || !Array.isArray(history)) return res.status(400).json({ error: 'Invalid history' });
+  if (!API_KEY) return res.status(500).json({ error: 'Missing API key' });
+
   const summaryPrompt = `请根据以上讨论，生成一份精炼的总结性答案，整合双方观点，突出共识和最终结论。`;
   const messages = [
     { role: 'system', content: '你是一个专业的总结助手，善于提炼要点。' },
@@ -132,13 +112,12 @@ app.post('/api/summarize', async (req, res) => {
     const summary = await callDeepSeek(messages, API_KEY, 0.5);
     res.json({ summary });
   } catch (error) {
-    console.error('[API] /api/summarize error:', error.message);
     res.status(500).json({ error: 'Summary failed', details: error.message });
   }
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', apiKeySet: !!API_KEY });
+  res.status(200).json({ status: 'ok', apiKeySet: !!API_KEY });
 });
 
 const PORT = process.env.PORT || 3000;
@@ -146,21 +125,12 @@ const server = app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
 
-// 保持进程活跃
+// 心跳
 setInterval(() => {
-  console.log('💓 Heartbeat: server is alive');
+  console.log('💓 Heartbeat');
 }, 30000);
 
 process.on('SIGTERM', () => {
-  console.log('Received SIGTERM, shutting down gracefully...');
-  server.close(() => {
-    console.log('Closed out remaining connections.');
-    process.exit(0);
-  });
-});
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
-});
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-});
+  console.log('SIGTERM received, closing...');
+  server.close(() => process.exit(0));
+});   
