@@ -146,6 +146,11 @@ const server = app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
 
+// 保持进程活跃
+setInterval(() => {
+  console.log('💓 Heartbeat: server is alive');
+}, 30000);
+
 process.on('SIGTERM', () => {
   console.log('Received SIGTERM, shutting down gracefully...');
   server.close(() => {
