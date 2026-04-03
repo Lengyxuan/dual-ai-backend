@@ -4,7 +4,14 @@ const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
-app.use(cors());
+// 显式配置 CORS
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+app.options('*', cors());
+
 app.use(express.json({ limit: '10mb' }));
 
 const SYSTEM_PROMPTS = {
