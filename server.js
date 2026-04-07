@@ -18,12 +18,14 @@ const SYSTEM_PROMPTS = {
   builder: `你是一个“构建与优化”专家。你的任务是：
 - 提供创新的、结构化的解决方案
 - 对已有的想法进行优化和完善
-- 用清晰、有逻辑的方式表达”`,
+- 用清晰、有逻辑的方式表达
+- 如果与对方达成一致，请在发言末尾明确说“我们达成共识”`,
 
   critic: `你是一个“批判与验证”专家。你的任务是：
 - 指出方案中的逻辑漏洞、潜在风险
 - 提出反方观点或质疑
-- 用理性、客观的方式表达”`
+- 用理性、客观的方式表达
+- 如果与对方达成一致，请在发言末尾明确说“我们达成共识”`
 };
 
 const OBSERVER_PROMPT = `你是一个“观察者/老板”角色。你的任务是：
@@ -43,6 +45,9 @@ function normalizeMessages(messages) {
 }
 
 async function callDeepSeek(messages, apiKey, temperature = 0.7) {
+  if (!apiKey) {
+    throw new Error('Missing API key for DeepSeek call');
+  }
   try {
     const normalized = normalizeMessages(messages);
     const response = await axios.post(
@@ -81,27 +86,57 @@ function cleanupSession(sessionId) {
   }
 }
 
+// 辅助：从请求中获取指定角色的 API Key，优先使用请求中的，其次环境变量
+function getApiKey(apiKeys, role, envFallback = true) {
+  const key = apiKeys?.[role];
+  if (key && key.trim() !== '') return key.trim();
+  if (envFallback && process.env.DEEPSEEK_API_KEY) return process.env.DEEPSEEK_API_KEY;
+  return null;
+}
+
 // ======================= API 路由 =======================
 app.get('/', (req, res) => {
   res.send('Triple AI Backend (Builder + Critic + Observer) is running');
 });
 
-// 启动辩论（支持终止）
+// 启动辩论（支持延续历史）
 app.post('/api/start', async (req, res) => {
-  const { question, maxRounds = 100 } = req.body;
+  const { question, maxRounds = 100, apiKeys, history: previousHistory } = req.body;
   if (!question) return res.status(400).json({ error: 'Missing question' });
-  if (!process.env.DEEPSEEK_API_KEY) return res.status(500).json({ error: 'Missing API key' });
+
+  // 获取三个角色的 API Key
+  const builderKey = getApiKey(apiKeys, 'builder', true);
+  const criticKey = getApiKey(apiKeys, 'critic', true);
+  const observerKey = getApiKey(apiKeys, 'observer', true);
+
+  if (!builderKey || !criticKey) {
+    return res.status(400).json({ error: 'Missing API key for builder or critic. Please provide in settings or set DEEPSEEK_API_KEY environment variable.' });
+  }
+
+  // ========== 关键改动：支持延续历史 ==========
+  // 如果前端提供了 previousHistory，则将其作为初始对话历史，并将新问题追加到最后
+  // 否则创建全新的历史（仅包含用户问题）
+  let history;
+  if (previousHistory && Array.isArray(previousHistory)) {
+    // 深拷贝避免污染前端数据，并确保只保留用户、builder、critic 的消息（过滤总结等）
+    const cleanedHistory = previousHistory.filter(msg => 
+      msg.role === 'user' || msg.role === 'builder' || msg.role === 'critic'
+    );
+    history = [...cleanedHistory, { role: 'user', content: question }];
+    console.log(`📜 Continuing existing debate with ${cleanedHistory.length} previous messages + new question`);
+  } else {
+    history = [{ role: 'user', content: question }];
+    console.log(`🆕 Starting new debate with initial question`);
+  }
 
   const sessionId = generateSessionId();
   sessions.set(sessionId, { aborted: false });
-  console.log(`🚀 Session ${sessionId} started for question: "${question.substring(0, 50)}..."`);
+  console.log(`🚀 Session ${sessionId} started`);
 
-  let history = [{ role: 'user', content: question }];
   let round = 0;
   let consensusReached = false;
-  const observerLogs = []; // 存储每轮观察者的输出
+  const observerLogs = [];
 
-  // 前端断开连接时自动标记终止
   req.on('close', () => {
     const sess = sessions.get(sessionId);
     if (sess) {
@@ -112,7 +147,6 @@ app.post('/api/start', async (req, res) => {
 
   try {
     while (round < maxRounds) {
-      // 检查是否被用户终止
       const session = sessions.get(sessionId);
       if (!session || session.aborted) {
         console.log(`🛑 Session ${sessionId} terminated by user`);
@@ -123,68 +157,65 @@ app.post('/api/start', async (req, res) => {
       round++;
       console.log(`🔄 Round ${round} for session ${sessionId}`);
 
-      // 1. 并行调用 Builder 和 Critic
       const builderMessages = [{ role: 'system', content: SYSTEM_PROMPTS.builder }, ...history];
       const criticMessages = [{ role: 'system', content: SYSTEM_PROMPTS.critic }, ...history];
 
       let builderReply, criticReply;
       try {
         [builderReply, criticReply] = await Promise.all([
-          callDeepSeek(builderMessages, process.env.DEEPSEEK_API_KEY, 1.0),
-          callDeepSeek(criticMessages, process.env.DEEPSEEK_API_KEY, 0.3)
+          callDeepSeek(builderMessages, builderKey, 1.0),
+          callDeepSeek(criticMessages, criticKey, 0.3)
         ]);
       } catch (err) {
         console.error(`❌ API call error in round ${round}:`, err.message);
         throw err;
       }
 
-      // 2. 将回复加入历史（对后续 Builder/Critic 可见）
       history.push({ role: 'builder', content: builderReply });
       history.push({ role: 'critic', content: criticReply });
 
-      // 3. 检查 Builder/Critic 自我声明的共识
       let selfConsensus = false;
       if (builderReply.includes('我们达成共识') || criticReply.includes('我们达成共识')) {
         selfConsensus = true;
         console.log(`🎉 Self consensus detected in round ${round}`);
       }
 
-      // 4. 调用观察者（老板），判断是否达成一致
-      const observerInput = `
-        以下是 Builder 和 Critic 的最新发言：
-        Builder: ${builderReply}
-        Critic: ${criticReply}
-        请判断他们是否已经达成一致。如果达成一致，回复“共识达成”，否则回复“继续讨论”。
-      `;
-      const observerMessages = [
-        { role: 'system', content: OBSERVER_PROMPT },
-        { role: 'user', content: observerInput }
-      ];
+      let observerConsensus = false;
+      if (observerKey) {
+        const observerInput = `
+          以下是 Builder 和 Critic 的最新发言：
+          Builder: ${builderReply}
+          Critic: ${criticReply}
+          请判断他们是否已经达成一致。如果达成一致，回复“共识达成”，否则回复“继续讨论”。
+        `;
+        const observerMessages = [
+          { role: 'system', content: OBSERVER_PROMPT },
+          { role: 'user', content: observerInput }
+        ];
 
-      let observerReply = "继续讨论"; // 默认值
-      try {
-        observerReply = await callDeepSeek(observerMessages, process.env.DEEPSEEK_API_KEY, 0.2);
-        observerLogs.push({ round, output: observerReply });
-        console.log(`👁️ Observer round ${round}: ${observerReply}`);
-      } catch (err) {
-        console.error(`Observer call failed in round ${round}:`, err.message);
-        observerLogs.push({ round, output: "error, treated as continue" });
+        let observerReply = "继续讨论";
+        try {
+          observerReply = await callDeepSeek(observerMessages, observerKey, 0.2);
+          observerLogs.push({ round, output: observerReply });
+          console.log(`👁️ Observer round ${round}: ${observerReply}`);
+        } catch (err) {
+          console.error(`Observer call failed in round ${round}:`, err.message);
+          observerLogs.push({ round, output: "error, treated as continue" });
+        }
+        observerConsensus = observerReply.includes('共识达成');
+      } else {
+        console.log(`⚠️ No observer API key provided, skipping observer in round ${round}`);
       }
 
-      const observerConsensus = observerReply.includes('共识达成');
-
-      // 5. 终止条件：自我共识 或 观察者共识
       if (selfConsensus || observerConsensus) {
         consensusReached = true;
         console.log(`✅ Consensus reached at round ${round} (self=${selfConsensus}, observer=${observerConsensus})`);
         break;
       }
 
-      // 可选：每轮延迟，避免 API 限流
       await new Promise(resolve => setTimeout(resolve, 500));
     }
 
-    // 辩论结束，清理会话
     cleanupSession(sessionId);
 
     if (consensusReached) {
@@ -212,7 +243,6 @@ app.post('/api/stop/:sessionId', (req, res) => {
   res.json({ success: true, message: `Session ${sessionId} will terminate shortly` });
 });
 
-// 获取会话状态（可选）
 app.get('/api/status/:sessionId', (req, res) => {
   const { sessionId } = req.params;
   const exists = sessions.has(sessionId);
@@ -221,9 +251,16 @@ app.get('/api/status/:sessionId', (req, res) => {
 
 // 生成总结（基于完整历史）
 app.post('/api/summarize', async (req, res) => {
-  const { history } = req.body;
+  const { history, apiKeys } = req.body;
   if (!history || !Array.isArray(history)) return res.status(400).json({ error: 'Invalid history' });
-  if (!process.env.DEEPSEEK_API_KEY) return res.status(500).json({ error: 'Missing API key' });
+
+  let summaryKey = getApiKey(apiKeys, 'builder', false);
+  if (!summaryKey) summaryKey = getApiKey(apiKeys, 'observer', false);
+  if (!summaryKey) summaryKey = process.env.DEEPSEEK_API_KEY;
+
+  if (!summaryKey) {
+    return res.status(500).json({ error: 'Missing API key for summarization. Please provide builder or observer key in settings.' });
+  }
 
   const summaryPrompt = `请根据以上讨论，生成一份精炼的总结性答案，整合双方观点，突出共识和最终结论。`;
   const messages = [
@@ -232,7 +269,7 @@ app.post('/api/summarize', async (req, res) => {
     { role: 'user', content: summaryPrompt }
   ];
   try {
-    const summary = await callDeepSeek(messages, process.env.DEEPSEEK_API_KEY, 0.5);
+    const summary = await callDeepSeek(messages, summaryKey, 0.5);
     res.json({ summary });
   } catch (error) {
     res.status(500).json({ error: 'Summary failed', details: error.message });
@@ -243,14 +280,12 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', apiKeySet: !!process.env.DEEPSEEK_API_KEY });
 });
 
-// ======================= 启动服务 =======================
 const PORT = process.env.PORT || 3000;
 const server = app.listen(PORT, () => {
   console.log(`✅ Triple AI Server running on port ${PORT}`);
-  console.log(`📡 Builder + Critic + Observer (silent boss)`);
+  console.log(`📡 Builder + Critic + Observer (supports conversation continuation)`);
 });
 
-// 心跳
 setInterval(() => {
   console.log('💓 Heartbeat');
 }, 30000);
