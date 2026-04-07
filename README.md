@@ -1,29 +1,35 @@
-# 🤖 AI智囊团 · 双角色对抗式辩论引擎
+# 🤖 AI智囊团 · 双角色引擎
 
-一个纯前端实现的 AI 辩论工具，让 **Builder（构建者）** 与 **Critic（批判者）** 两个 AI 角色围绕用户提出的问题展开多轮、逐条反驳的深度辩论。适用于观点碰撞、方案推演、批判性思维训练等场景。
+一个基于 **Node.js + Express** 的后端服务和现代前端组成的 AI 辩论工具。让 **Builder（构建者）** 与 **Critic（批判者）** 两个 AI 角色围绕用户问题展开多轮、逐条反驳的深度辩论，并支持 **Observer（观察者）** 自动判断共识。所有对话通过 SSE 实时推送，体验流畅。
 
 ## ✨ 功能特性
 
 - **双角色隔离辩论**  
-  Builder 负责提出建设性观点，Critic 负责质疑与风险分析，两者使用独立的 API Key，角色提示完全分离。
+  Builder（建设性观点）与 Critic（质疑与风险分析）使用独立的 API Key，角色提示完全分离，可接入不同模型。
+
+- **流式实时输出（SSE）**  
+  后端每生成一条发言就立刻推送到前端，无需等待整轮结束，用户体验更佳。
 
 - **对抗式逐轮反驳**  
   - 首轮：Builder 直接回应用户问题，Critic 反驳 Builder  
   - 后续轮次：双方严格针对上一条发言（对方观点）进行反驳、补充或深化，避免重复，引入新论点
 
 - **灵活的控制能力**  
-  - **终止辩论**：随时停止正在进行的辩论  
-  - **继续讨论**：终止后可基于已有历史继续辩论  
+  - **终止辩论**：随时停止，后端立即取消进行中的 API 请求  
+  - **继续讨论**：终止后可基于已有历史继续辩论，轮次计数自动延续  
   - **新建对话 / 清空对话**：管理多轮讨论会话
 
 - **历史会话管理**  
-  自动保存每个对话会话，支持加载、删除历史记录，最多保留 30 条会话。
+  前端自动保存每个对话会话到 `localStorage`，支持加载、删除历史记录，最多保留 30 条会话。
 
 - **智能滚动体验**  
   用户向上滚动时暂停自动滚动，避免被打断阅读；向下滚动到底部后恢复自动跟随新消息。
 
-- **API 兼容性**  
-  支持任何 OpenAI 兼容的 API 接口（如 OpenAI、Azure OpenAI、本地部署的 vLLM 等），只需配置 Base URL 和 API Key。
+- **通用 API 兼容**  
+  支持任何 OpenAI 兼容的 API 接口（OpenAI、Azure、DeepSeek、vLLM、LocalAI 等），只需配置 Base URL、模型名称和 API Key。
+
+- **Observer 共识检测（可选）**  
+  可额外配置一个 Observer API Key，自动分析 Builder 和 Critic 的最新发言，判断是否达成共识并提前结束辩论。
 
 - **美观的 UI**  
   Builder 使用薄荷绿背景，Critic 使用暖杏色背景，区分度高且不刺眼，支持暗色滚动条和柔和动画。
@@ -31,77 +37,62 @@
 ## 🚀 快速开始
 
 ### 前置要求
-- 一个现代浏览器（Chrome / Edge / Firefox / Safari）
-- 有效的 OpenAI 兼容 API Key（Builder 和 Critic 可共用同一个 Key，也可使用不同 Key）
-- （可选）自己的后端服务，用于代理 API 请求
+- Node.js 18+ 环境
+- 一个有效的 OpenAI 兼容 API Key（Builder 和 Critic 可共用同一个 Key，也可使用不同 Key）
+- （可选）Observer API Key
 
-### 安装与运行
-1. **下载代码**  
-   将 `index.html` 保存到本地任意目录。
+### 1. 安装后端依赖
 
-2. **打开文件**  
-   双击 `index.html`，浏览器会自动打开并显示界面。
 
-3. **配置 API**  
-   - 点击右上角 **⚙️ 设置** 按钮
-   - 填写 **API Base URL**（例如 `https://api.openai.com/v1`）
-   - 填写 **模型名称**（如 `gpt-3.5-turbo`、`gpt-4o-mini`）
-   - 填写 **Builder API Key** 和 **Critic API Key**（可使用相同 Key）
-   - 设置 **最大辩论轮数**（默认 10 轮，每轮包含 Builder + Critic 各一次发言）
-   - 点击 **保存**
+npm install express cors axios dotenv
 
-4. **开始辩论**  
-   - 在底部输入框输入您的问题或观点
-   - 点击 **发送** 或按 `Enter`（`Shift+Enter` 换行）
-   - Builder 和 Critic 将自动开始逐轮反驳
+###  2. 配置环境变量
 
-5. **控制辩论**  
-   - **终止辩论**：点击 `⏹️ 终止辩论` 按钮  
-   - **继续讨论**：终止后点击 `▶️ 继续讨论` 按钮，AI 将基于已有历史继续辩论  
-   - **新建对话**：清空当前历史并开始全新会话  
-   - **清空对话**：删除当前会话所有消息
+创建 .env 文件（也可以完全在前端设置中填写，后端环境变量作为默认值）：
+# 默认 API 配置（前端设置会覆盖）
+API_BASE_URL=https://api.openai.com/v1
+MODEL_NAME=gpt-3.5-turbo
 
-### 历史会话管理
-- 所有对话会自动保存在浏览器的 `localStorage` 中，刷新页面不会丢失
-- 左侧边栏显示历史会话列表，点击可加载之前的辩论
-- 每个会话项右侧有删除按钮，可删除不需要的会话
+# API Keys（如果不希望前端传递，可在此配置，更安全）
+BUILDER_API_KEY=sk-xxxxx
+CRITIC_API_KEY=sk-xxxxx
+OBSERVER_API_KEY=sk-xxxxx   # 可选
 
-## ⚙️ 配置说明
+PORT=30001
 
-### API 设置
-| 参数 | 说明 | 示例 |
-|------|------|------|
-| API Base URL | OpenAI 兼容接口的根地址 | `https://api.openai.com/v1` |
-| 模型名称 | 使用的模型 ID | `gpt-3.5-turbo`, `gpt-4o-mini` |
-| Builder API Key | 构建者角色的 API Key | `sk-xxxxxxxx` |
-| Critic API Key | 批判者角色的 API Key | `sk-yyyyyyyy` |
-| 最大辩论轮数 | 每次触发辩论的最大轮数（每轮 = Builder+Critic 各一次） | `10` |
+### 3. 启动后端服务
 
-> **注意**：如果使用代理或自定义后端，请确保 Base URL 指向支持 `/chat/completions` 路径的服务。
+node server.js
 
-### 角色系统提示（内置，无需配置）
-- **Builder**：  
-  “你是一位资深构建者……针对上一条消息进行回应，提出反驳、补充证据或深化论点。严禁重复之前的内容。”
-- **Critic**：  
-  “你是一位严谨的批判者……针对上一条消息提出质疑、指出逻辑缺陷或风险。严禁重复之前的质疑。”
 
-### 本地存储
-- 会话数据存储在 `localStorage` 的 `triple_ai_sessions_v2` 键中
-- 设置数据存储在 `localStorage` 的 `triple_ai_settings_v2` 键中
+### ⚙️ 配置说明
+前端设置项（点击设置按钮）
+参数	说明	示例
+API Base URL	OpenAI 兼容接口的根地址	https://api.openai.com/v1
+模型名称	使用的模型 ID	gpt-3.5-turbo, deepseek-chat
+Builder API Key	构建者角色的 API Key	sk-xxxxxxxx
+Critic API Key	批判者角色的 API Key	sk-yyyyyyyy
+Observer API Key	观察者角色的 API Key（可选）	sk-zzzzzzzz
+最大辩论轮数	每次触发辩论的最大轮数	10
+这些设置会保存在浏览器本地，下次打开自动加载。
 
-## 🧪 测试连接
-
-在设置弹窗中点击 **测试连接** 按钮，可以快速验证 API Base URL 和 API Key 是否有效。测试会发送一个极简的请求（`max_tokens=5`），不会产生额外费用。
 
 ## 🌐 部署建议
 
-### 纯静态托管
-由于项目是纯前端，您可以将其部署到任何静态托管服务：
-- **GitHub Pages**：将 `index.html` 上传到仓库，开启 Pages 服务
-- **Vercel / Netlify**：直接拖拽 `index.html` 即可
-- **本地服务器**：使用 `python -m http.server 8080` 或 `npx serve`
+### 后端部署
 
-### 与后端集成（可选）
-如果您有自己的后端服务（如 Flask、Express），可以将 `index.html` 作为静态文件托管，并在前端设置中将 API Base URL 指向您的后端地址（需实现 `/chat/completions` 接口）。
+使用 pm2 或 systemd 保持服务常驻
+设置反向代理（如 Nginx）处理 HTTPS 和 CORS
+推荐将 API Key 放在后端环境变量中，前端不再传递，增强安全性
 
-## 📁 文件结构
+### 前端部署
+纯静态文件，可托管在：
+
+GitHub Pages
+Vercel / Netlify
+任何 HTTP 服务器（python -m http.server 或 npx serve）
+
+前端需要知道后端的实际地址（可通过修改 index.html 中的 BACKEND_URL 常量实现）。
+
+# 📄 许可证
+MIT
