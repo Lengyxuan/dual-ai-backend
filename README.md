@@ -49,14 +49,15 @@ npm install express cors axios dotenv
 ###  2. 配置环境变量
 
 创建 .env 文件（也可以完全在前端设置中填写，后端环境变量作为默认值）：
-# 默认 API 配置（前端设置会覆盖）
+
+默认 API 配置（前端设置会覆盖）
+
 API_BASE_URL=https://api.openai.com/v1
 MODEL_NAME=gpt-3.5-turbo
 
 # API Keys（如果不希望前端传递，可在此配置，更安全）
 BUILDER_API_KEY=sk-xxxxx
 CRITIC_API_KEY=sk-xxxxx
-OBSERVER_API_KEY=sk-xxxxx   # 可选
 
 PORT=30001
 
@@ -72,7 +73,6 @@ API Base URL	OpenAI 兼容接口的根地址	https://api.openai.com/v1
 模型名称	使用的模型 ID	gpt-3.5-turbo, deepseek-chat
 Builder API Key	构建者角色的 API Key	sk-xxxxxxxx
 Critic API Key	批判者角色的 API Key	sk-yyyyyyyy
-Observer API Key	观察者角色的 API Key（可选）	sk-zzzzzzzz
 最大辩论轮数	每次触发辩论的最大轮数	10
 这些设置会保存在浏览器本地，下次打开自动加载。
 
