@@ -18,14 +18,12 @@ const SYSTEM_PROMPTS = {
   builder: `你是一个“构建与优化”专家。你的任务是：
 - 提供创新的、结构化的解决方案
 - 对已有的想法进行优化和完善
-- 用清晰、有逻辑的方式表达
-- 如果与对方达成一致，请在发言末尾明确说“我们达成共识”`,
+- 用清晰、有逻辑的方式表达”`,
 
   critic: `你是一个“批判与验证”专家。你的任务是：
 - 指出方案中的逻辑漏洞、潜在风险
 - 提出反方观点或质疑
-- 用理性、客观的方式表达
-- 如果与对方达成一致，请在发言末尾明确说“我们达成共识”`
+- 用理性、客观的方式表达”`
 };
 
 const OBSERVER_PROMPT = `你是一个“观察者/老板”角色。你的任务是：
@@ -33,7 +31,7 @@ const OBSERVER_PROMPT = `你是一个“观察者/老板”角色。你的任务
 - 判断双方是否已经达成一致、形成共识，或者一方完全接受了另一方的观点
 - 如果达成一致，请回复：“共识达成”
 - 如果仍未达成一致，请回复：“继续讨论”
-注意：你只输出上述两个短语之一，不要输出其他内容。`;
+注意：你只输出上述两个短语之间达成共识的部分，不要输出其他内容。`;
 
 // ======================= 辅助函数 =======================
 function normalizeMessages(messages) {
@@ -86,7 +84,7 @@ function cleanupSession(sessionId) {
   }
 }
 
-// 辅助：从请求中获取指定角色的 API Key，优先使用请求中的，其次环境变量
+// ✅ 前端适配：优先使用前端传递的 apiKeys，其次环境变量
 function getApiKey(apiKeys, role, envFallback = true) {
   const key = apiKeys?.[role];
   if (key && key.trim() !== '') return key.trim();
@@ -99,12 +97,11 @@ app.get('/', (req, res) => {
   res.send('Triple AI Backend (Builder + Critic + Observer) is running');
 });
 
-// 启动辩论（支持延续历史）
+// ✅ 前端适配：支持 history 延续对话 + apiKeys 独立配置
 app.post('/api/start', async (req, res) => {
   const { question, maxRounds = 100, apiKeys, history: previousHistory } = req.body;
   if (!question) return res.status(400).json({ error: 'Missing question' });
 
-  // 获取三个角色的 API Key
   const builderKey = getApiKey(apiKeys, 'builder', true);
   const criticKey = getApiKey(apiKeys, 'critic', true);
   const observerKey = getApiKey(apiKeys, 'observer', true);
@@ -113,12 +110,9 @@ app.post('/api/start', async (req, res) => {
     return res.status(400).json({ error: 'Missing API key for builder or critic. Please provide in settings or set DEEPSEEK_API_KEY environment variable.' });
   }
 
-  // ========== 关键改动：支持延续历史 ==========
-  // 如果前端提供了 previousHistory，则将其作为初始对话历史，并将新问题追加到最后
-  // 否则创建全新的历史（仅包含用户问题）
+  // 延续历史逻辑
   let history;
   if (previousHistory && Array.isArray(previousHistory)) {
-    // 深拷贝避免污染前端数据，并确保只保留用户、builder、critic 的消息（过滤总结等）
     const cleanedHistory = previousHistory.filter(msg => 
       msg.role === 'user' || msg.role === 'builder' || msg.role === 'critic'
     );
@@ -231,7 +225,7 @@ app.post('/api/start', async (req, res) => {
   }
 });
 
-// 终止辩论的端点
+// ✅ 前端适配：终止辩论端点，前端通过 sessionId 停止
 app.post('/api/stop/:sessionId', (req, res) => {
   const { sessionId } = req.params;
   const session = sessions.get(sessionId);
@@ -249,7 +243,7 @@ app.get('/api/status/:sessionId', (req, res) => {
   res.json({ sessionId, active: exists });
 });
 
-// 生成总结（基于完整历史）
+// ✅ 前端适配：总结端点，支持 apiKeys
 app.post('/api/summarize', async (req, res) => {
   const { history, apiKeys } = req.body;
   if (!history || !Array.isArray(history)) return res.status(400).json({ error: 'Invalid history' });
